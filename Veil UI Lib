@@ -1,0 +1,1583 @@
+--[[
+    ██╗   ██╗███████╗██╗██╗     
+    ██║   ██║██╔════╝██║██║     
+    ██║   ██║█████╗  ██║██║     
+    ╚██╗ ██╔╝██╔══╝  ██║██║     
+     ╚████╔╝ ███████╗██║███████╗
+      ╚═══╝  ╚══════╝╚═╝╚══════╝
+    
+    Veil UI Library v2.0
+    Better than Linoria. More customizable. Cleaner API.
+    
+    QUICK START:
+        local Veil = loadstring(game:HttpGet("..."))()
+        local Window = Veil:Window({ Title = "My Script", SubTitle = "v1.0" })
+        local Tab = Window:Tab("Main")
+        local Section = Tab:Section("Combat")
+        Section:Toggle({ Name = "Aimbot", Flag = "AimbotEnabled", Default = false, Callback = function(v) end })
+]]
+
+-- ══════════════════════════════════════════
+--  SERVICES
+-- ══════════════════════════════════════════
+local TweenService     = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local RunService       = game:GetService("RunService")
+local Players          = game:GetService("Players")
+local TextService      = game:GetService("TextService")
+local CoreGui          = game:GetService("CoreGui")
+
+local LocalPlayer = Players.LocalPlayer
+local Mouse       = LocalPlayer:GetMouse()
+
+-- ══════════════════════════════════════════
+--  UTILITY
+-- ══════════════════════════════════════════
+local function Tween(obj, props, duration, style, direction)
+    style     = style     or Enum.EasingStyle.Quart
+    direction = direction or Enum.EasingDirection.Out
+    return TweenService:Create(obj, TweenInfo.new(duration or 0.2, style, direction), props)
+end
+
+local function New(class, props, children)
+    local obj = Instance.new(class)
+    for k, v in pairs(props or {}) do
+        if k ~= "Parent" then obj[k] = v end
+    end
+    for _, child in pairs(children or {}) do
+        child.Parent = obj
+    end
+    if props and props.Parent then obj.Parent = props.Parent end
+    return obj
+end
+
+local function Lerp(a, b, t) return a + (b - a) * t end
+
+local function RoundCorners(frame, radius)
+    New("UICorner", { CornerRadius = UDim.new(0, radius), Parent = frame })
+    return frame
+end
+
+local function AddPadding(frame, x, y)
+    New("UIPadding", {
+        PaddingLeft   = UDim.new(0, x),
+        PaddingRight  = UDim.new(0, x),
+        PaddingTop    = UDim.new(0, y),
+        PaddingBottom = UDim.new(0, y),
+        Parent        = frame
+    })
+    return frame
+end
+
+local function AddListLayout(frame, direction, spacing, sortOrder)
+    New("UIListLayout", {
+        FillDirection       = direction or Enum.FillDirection.Vertical,
+        SortOrder           = sortOrder or Enum.SortOrder.LayoutOrder,
+        Padding             = UDim.new(0, spacing or 4),
+        Parent              = frame
+    })
+    return frame
+end
+
+local function MakeDraggable(frame, handle)
+    handle = handle or frame
+    local dragging, dragStart, startPos
+    handle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging  = true
+            dragStart = input.Position
+            startPos  = frame.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local delta = input.Position - dragStart
+            frame.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end)
+end
+
+-- ══════════════════════════════════════════
+--  VEIL CORE
+-- ══════════════════════════════════════════
+local Veil = {}
+Veil.__index = Veil
+Veil.Flags   = {}        -- global flag registry
+Veil.Themes  = {}        -- registered themes
+Veil.Windows = {}        -- all open windows
+
+-- ══════════════════════════════════════════
+--  BUILT-IN THEMES
+-- ══════════════════════════════════════════
+Veil.Themes["Dark"] = {
+    -- Window
+    WindowBg         = Color3.fromRGB(15,  15,  18),
+    WindowBorder     = Color3.fromRGB(35,  35,  42),
+    TitleBarBg       = Color3.fromRGB(20,  20,  25),
+    TitleText        = Color3.fromRGB(240, 240, 255),
+    SubTitleText     = Color3.fromRGB(120, 120, 140),
+    -- Tabs
+    TabBarBg         = Color3.fromRGB(18,  18,  22),
+    TabIdle          = Color3.fromRGB(50,  50,  62),
+    TabActive        = Color3.fromRGB(100, 90,  255),
+    TabText          = Color3.fromRGB(160, 160, 180),
+    TabTextActive    = Color3.fromRGB(255, 255, 255),
+    -- Section
+    SectionBg        = Color3.fromRGB(22,  22,  28),
+    SectionBorder    = Color3.fromRGB(38,  38,  48),
+    SectionTitle     = Color3.fromRGB(140, 130, 255),
+    -- Components
+    ComponentBg      = Color3.fromRGB(28,  28,  36),
+    ComponentBorder  = Color3.fromRGB(45,  45,  58),
+    ComponentHover   = Color3.fromRGB(38,  38,  50),
+    LabelText        = Color3.fromRGB(200, 200, 220),
+    DescText         = Color3.fromRGB(100, 100, 120),
+    -- Toggle
+    ToggleOff        = Color3.fromRGB(55,  55,  68),
+    ToggleOn         = Color3.fromRGB(100, 90,  255),
+    ToggleKnob       = Color3.fromRGB(255, 255, 255),
+    -- Slider
+    SliderTrack      = Color3.fromRGB(45,  45,  58),
+    SliderFill       = Color3.fromRGB(100, 90,  255),
+    SliderKnob       = Color3.fromRGB(255, 255, 255),
+    -- Dropdown
+    DropdownBg       = Color3.fromRGB(22,  22,  30),
+    DropdownOption   = Color3.fromRGB(28,  28,  38),
+    DropdownSelected = Color3.fromRGB(100, 90,  255),
+    -- Input
+    InputBg          = Color3.fromRGB(20,  20,  28),
+    InputBorder      = Color3.fromRGB(50,  50,  65),
+    InputText        = Color3.fromRGB(220, 220, 240),
+    InputPlaceholder = Color3.fromRGB(80,  80,  100),
+    -- Button
+    ButtonBg         = Color3.fromRGB(100, 90,  255),
+    ButtonHover      = Color3.fromRGB(120, 110, 255),
+    ButtonPress      = Color3.fromRGB(80,  70,  220),
+    ButtonText       = Color3.fromRGB(255, 255, 255),
+    -- Accent
+    Accent           = Color3.fromRGB(100, 90,  255),
+    AccentDim        = Color3.fromRGB(60,  55,  150),
+    -- Notification
+    NotifBg          = Color3.fromRGB(22,  22,  30),
+    NotifBorder      = Color3.fromRGB(100, 90,  255),
+    NotifTitle       = Color3.fromRGB(255, 255, 255),
+    NotifText        = Color3.fromRGB(180, 180, 200),
+    -- Scrollbar
+    ScrollBar        = Color3.fromRGB(60,  55,  80),
+    -- Misc
+    Shadow           = Color3.fromRGB(0,   0,   0),
+    Separator        = Color3.fromRGB(35,  35,  45),
+}
+
+Veil.Themes["Light"] = {
+    WindowBg         = Color3.fromRGB(240, 240, 248),
+    WindowBorder     = Color3.fromRGB(200, 200, 215),
+    TitleBarBg       = Color3.fromRGB(228, 228, 240),
+    TitleText        = Color3.fromRGB(30,  30,  50),
+    SubTitleText     = Color3.fromRGB(100, 100, 130),
+    TabBarBg         = Color3.fromRGB(220, 220, 235),
+    TabIdle          = Color3.fromRGB(200, 200, 220),
+    TabActive        = Color3.fromRGB(90,  80,  220),
+    TabText          = Color3.fromRGB(80,  80,  110),
+    TabTextActive    = Color3.fromRGB(255, 255, 255),
+    SectionBg        = Color3.fromRGB(232, 232, 245),
+    SectionBorder    = Color3.fromRGB(200, 200, 220),
+    SectionTitle     = Color3.fromRGB(80,  70,  200),
+    ComponentBg      = Color3.fromRGB(245, 245, 255),
+    ComponentBorder  = Color3.fromRGB(210, 210, 225),
+    ComponentHover   = Color3.fromRGB(235, 235, 250),
+    LabelText        = Color3.fromRGB(40,  40,  70),
+    DescText         = Color3.fromRGB(120, 120, 150),
+    ToggleOff        = Color3.fromRGB(180, 180, 200),
+    ToggleOn         = Color3.fromRGB(90,  80,  220),
+    ToggleKnob       = Color3.fromRGB(255, 255, 255),
+    SliderTrack      = Color3.fromRGB(200, 200, 220),
+    SliderFill       = Color3.fromRGB(90,  80,  220),
+    SliderKnob       = Color3.fromRGB(255, 255, 255),
+    DropdownBg       = Color3.fromRGB(232, 232, 248),
+    DropdownOption   = Color3.fromRGB(240, 240, 255),
+    DropdownSelected = Color3.fromRGB(90,  80,  220),
+    InputBg          = Color3.fromRGB(248, 248, 255),
+    InputBorder      = Color3.fromRGB(190, 190, 215),
+    InputText        = Color3.fromRGB(30,  30,  60),
+    InputPlaceholder = Color3.fromRGB(160, 160, 185),
+    ButtonBg         = Color3.fromRGB(90,  80,  220),
+    ButtonHover      = Color3.fromRGB(110, 100, 235),
+    ButtonPress      = Color3.fromRGB(70,  60,  190),
+    ButtonText       = Color3.fromRGB(255, 255, 255),
+    Accent           = Color3.fromRGB(90,  80,  220),
+    AccentDim        = Color3.fromRGB(160, 150, 230),
+    NotifBg          = Color3.fromRGB(240, 240, 255),
+    NotifBorder      = Color3.fromRGB(90,  80,  220),
+    NotifTitle       = Color3.fromRGB(30,  30,  60),
+    NotifText        = Color3.fromRGB(80,  80,  110),
+    ScrollBar        = Color3.fromRGB(180, 175, 210),
+    Shadow           = Color3.fromRGB(150, 150, 180),
+    Separator        = Color3.fromRGB(200, 200, 220),
+}
+
+Veil.Themes["Midnight"] = {
+    WindowBg         = Color3.fromRGB(8,   8,   12),
+    WindowBorder     = Color3.fromRGB(25,  25,  35),
+    TitleBarBg       = Color3.fromRGB(12,  12,  18),
+    TitleText        = Color3.fromRGB(200, 200, 255),
+    SubTitleText     = Color3.fromRGB(80,  80,  120),
+    TabBarBg         = Color3.fromRGB(10,  10,  16),
+    TabIdle          = Color3.fromRGB(30,  30,  48),
+    TabActive        = Color3.fromRGB(0,   180, 255),
+    TabText          = Color3.fromRGB(120, 120, 160),
+    TabTextActive    = Color3.fromRGB(255, 255, 255),
+    SectionBg        = Color3.fromRGB(12,  12,  20),
+    SectionBorder    = Color3.fromRGB(28,  28,  45),
+    SectionTitle     = Color3.fromRGB(0,   180, 255),
+    ComponentBg      = Color3.fromRGB(16,  16,  26),
+    ComponentBorder  = Color3.fromRGB(32,  32,  50),
+    ComponentHover   = Color3.fromRGB(22,  22,  36),
+    LabelText        = Color3.fromRGB(180, 180, 220),
+    DescText         = Color3.fromRGB(80,  80,  120),
+    ToggleOff        = Color3.fromRGB(40,  40,  60),
+    ToggleOn         = Color3.fromRGB(0,   180, 255),
+    ToggleKnob       = Color3.fromRGB(255, 255, 255),
+    SliderTrack      = Color3.fromRGB(35,  35,  55),
+    SliderFill       = Color3.fromRGB(0,   180, 255),
+    SliderKnob       = Color3.fromRGB(255, 255, 255),
+    DropdownBg       = Color3.fromRGB(12,  12,  22),
+    DropdownOption   = Color3.fromRGB(18,  18,  30),
+    DropdownSelected = Color3.fromRGB(0,   180, 255),
+    InputBg          = Color3.fromRGB(10,  10,  18),
+    InputBorder      = Color3.fromRGB(35,  35,  58),
+    InputText        = Color3.fromRGB(200, 200, 240),
+    InputPlaceholder = Color3.fromRGB(60,  60,  100),
+    ButtonBg         = Color3.fromRGB(0,   160, 230),
+    ButtonHover      = Color3.fromRGB(0,   190, 255),
+    ButtonPress      = Color3.fromRGB(0,   130, 200),
+    ButtonText       = Color3.fromRGB(255, 255, 255),
+    Accent           = Color3.fromRGB(0,   180, 255),
+    AccentDim        = Color3.fromRGB(0,   80,  130),
+    NotifBg          = Color3.fromRGB(12,  12,  22),
+    NotifBorder      = Color3.fromRGB(0,   180, 255),
+    NotifTitle       = Color3.fromRGB(200, 200, 255),
+    NotifText        = Color3.fromRGB(130, 130, 180),
+    ScrollBar        = Color3.fromRGB(40,  40,  70),
+    Shadow           = Color3.fromRGB(0,   0,   0),
+    Separator        = Color3.fromRGB(22,  22,  38),
+}
+
+-- ══════════════════════════════════════════
+--  CUSTOM THEME REGISTRATION
+-- ══════════════════════════════════════════
+function Veil:RegisterTheme(name, theme)
+    self.Themes[name] = theme
+end
+
+-- ══════════════════════════════════════════
+--  NOTIFICATION SYSTEM (standalone)
+-- ══════════════════════════════════════════
+local NotifHolder
+local function EnsureNotifHolder()
+    if NotifHolder and NotifHolder.Parent then return end
+    local gui = New("ScreenGui", {
+        Name            = "VeilNotifications",
+        ResetOnSpawn    = false,
+        ZIndexBehavior  = Enum.ZIndexBehavior.Sibling,
+        IgnoreGuiInset  = true,
+        Parent          = CoreGui
+    })
+    NotifHolder = New("Frame", {
+        Name              = "Holder",
+        AnchorPoint       = Vector2.new(1, 1),
+        Position          = UDim2.new(1, -16, 1, -16),
+        Size              = UDim2.new(0, 300, 1, -32),
+        BackgroundTransparency = 1,
+        Parent            = gui
+    })
+    AddListLayout(NotifHolder, Enum.FillDirection.Vertical, 8)
+    NotifHolder.UIListLayout.VerticalAlignment = Enum.VerticalAlignment.Bottom
+end
+
+function Veil:Notify(options)
+    options = options or {}
+    local theme   = self.Themes[options.Theme or "Dark"]
+    local title   = options.Title   or "Veil"
+    local text    = options.Text    or ""
+    local duration = options.Duration or 4
+    local accent  = options.Accent  or theme.Accent
+
+    EnsureNotifHolder()
+
+    local card = New("Frame", {
+        Name              = "Notification",
+        Size              = UDim2.new(1, 0, 0, 0),
+        BackgroundColor3  = theme.NotifBg,
+        ClipsDescendants  = true,
+        Parent            = NotifHolder
+    })
+    RoundCorners(card, 8)
+    New("UIStroke", { Color = accent, Thickness = 1, Parent = card })
+
+    -- accent left bar
+    New("Frame", {
+        Size             = UDim2.new(0, 3, 1, 0),
+        BackgroundColor3 = accent,
+        BorderSizePixel  = 0,
+        Parent           = card
+    })
+
+    local inner = New("Frame", {
+        Position         = UDim2.new(0, 12, 0, 0),
+        Size             = UDim2.new(1, -12, 1, 0),
+        BackgroundTransparency = 1,
+        Parent           = card
+    })
+    AddPadding(inner, 8, 10)
+    AddListLayout(inner, Enum.FillDirection.Vertical, 3)
+
+    New("TextLabel", {
+        Size            = UDim2.new(1, 0, 0, 18),
+        BackgroundTransparency = 1,
+        Text            = title,
+        TextColor3      = theme.NotifTitle,
+        TextSize        = 13,
+        Font            = Enum.Font.GothamBold,
+        TextXAlignment  = Enum.TextXAlignment.Left,
+        Parent          = inner
+    })
+    New("TextLabel", {
+        Size            = UDim2.new(1, 0, 0, 14),
+        BackgroundTransparency = 1,
+        Text            = text,
+        TextColor3      = theme.NotifText,
+        TextSize        = 11,
+        Font            = Enum.Font.Gotham,
+        TextXAlignment  = Enum.TextXAlignment.Left,
+        TextWrapped     = true,
+        Parent          = inner
+    })
+
+    -- progress bar
+    local bar = New("Frame", {
+        AnchorPoint      = Vector2.new(0, 1),
+        Position         = UDim2.new(0, 0, 1, 0),
+        Size             = UDim2.new(1, 0, 0, 2),
+        BackgroundColor3 = accent,
+        BorderSizePixel  = 0,
+        Parent           = card
+    })
+
+    -- animate in
+    card.Size = UDim2.new(1, 0, 0, 0)
+    Tween(card, { Size = UDim2.new(1, 0, 0, 72) }, 0.3):Play()
+    task.wait(0.3)
+
+    -- shrink bar over duration
+    Tween(bar, { Size = UDim2.new(0, 0, 0, 2) }, duration, Enum.EasingStyle.Linear):Play()
+    task.delay(duration, function()
+        Tween(card, { Size = UDim2.new(1, 0, 0, 0) }, 0.25):Play()
+        task.wait(0.3)
+        card:Destroy()
+    end)
+end
+
+-- ══════════════════════════════════════════
+--  WINDOW
+-- ══════════════════════════════════════════
+function Veil:Window(config)
+    config = config or {}
+    local theme = self.Themes[config.Theme or "Dark"]
+
+    local Window  = { Tabs = {}, ActiveTab = nil, Theme = theme, Flags = self.Flags }
+    local TabList = {}
+
+    -- ScreenGui
+    local gui = New("ScreenGui", {
+        Name           = config.Name or "VeilUI",
+        ResetOnSpawn   = false,
+        ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+        IgnoreGuiInset = true,
+        Parent         = CoreGui
+    })
+
+    -- shadow
+    local shadow = New("ImageLabel", {
+        AnchorPoint          = Vector2.new(0.5, 0.5),
+        Position             = UDim2.new(0.5, 2, 0.5, 4),
+        Size                 = UDim2.new(0, config.Width and config.Width + 40 or 620, 0, config.Height and config.Height + 40 or 440),
+        BackgroundTransparency = 1,
+        Image                = "rbxassetid://7912134082",
+        ImageColor3          = theme.Shadow,
+        ImageTransparency    = 0.4,
+        ScaleType            = Enum.ScaleType.Slice,
+        SliceCenter          = Rect.new(49, 49, 450, 450),
+        Parent               = gui
+    })
+
+    -- main frame
+    local main = New("Frame", {
+        AnchorPoint      = Vector2.new(0.5, 0.5),
+        Position         = UDim2.new(0.5, 0, 0.5, 0),
+        Size             = UDim2.new(0, config.Width or 580, 0, config.Height or 400),
+        BackgroundColor3 = theme.WindowBg,
+        ClipsDescendants = true,
+        Parent           = gui
+    })
+    RoundCorners(main, 10)
+    New("UIStroke", { Color = theme.WindowBorder, Thickness = 1, Parent = main })
+
+    -- titlebar
+    local titleBar = New("Frame", {
+        Size             = UDim2.new(1, 0, 0, 44),
+        BackgroundColor3 = theme.TitleBarBg,
+        Parent           = main
+    })
+    New("UIStroke", { Color = theme.Separator, Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = titleBar })
+
+    -- logo accent
+    New("Frame", {
+        Size             = UDim2.new(0, 3, 1, -12),
+        Position         = UDim2.new(0, 10, 0, 6),
+        BackgroundColor3 = theme.Accent,
+        BorderSizePixel  = 0,
+        Parent           = titleBar
+    })
+
+    New("TextLabel", {
+        Position        = UDim2.new(0, 22, 0, 6),
+        Size            = UDim2.new(0.5, 0, 0, 18),
+        BackgroundTransparency = 1,
+        Text            = config.Title or "Veil",
+        TextColor3      = theme.TitleText,
+        TextSize        = 14,
+        Font            = Enum.Font.GothamBold,
+        TextXAlignment  = Enum.TextXAlignment.Left,
+        Parent          = titleBar
+    })
+    New("TextLabel", {
+        Position        = UDim2.new(0, 22, 0, 24),
+        Size            = UDim2.new(0.5, 0, 0, 14),
+        BackgroundTransparency = 1,
+        Text            = config.SubTitle or "",
+        TextColor3      = theme.SubTitleText,
+        TextSize        = 10,
+        Font            = Enum.Font.Gotham,
+        TextXAlignment  = Enum.TextXAlignment.Left,
+        Parent          = titleBar
+    })
+
+    -- close / minimize buttons
+    local function TitleBtn(xOffset, color, symbol, callback)
+        local btn = New("TextButton", {
+            AnchorPoint     = Vector2.new(1, 0.5),
+            Position        = UDim2.new(1, xOffset, 0.5, 0),
+            Size            = UDim2.new(0, 16, 0, 16),
+            BackgroundColor3 = color,
+            Text            = symbol,
+            TextColor3      = Color3.fromRGB(255, 255, 255),
+            TextSize        = 9,
+            Font            = Enum.Font.GothamBold,
+            Parent          = titleBar
+        })
+        RoundCorners(btn, 8)
+        btn.MouseButton1Click:Connect(callback)
+        return btn
+    end
+
+    TitleBtn(-10, Color3.fromRGB(255, 80, 80), "×", function() gui:Destroy() end)
+    TitleBtn(-32, Color3.fromRGB(255, 190, 0), "−", function()
+        -- minimize toggle
+        local collapsed = main.Size.Y.Offset == 44
+        Tween(main, {
+            Size = collapsed
+                and UDim2.new(0, config.Width or 580, 0, config.Height or 400)
+                or  UDim2.new(0, config.Width or 580, 0, 44)
+        }, 0.25):Play()
+    end)
+
+    MakeDraggable(main, titleBar)
+
+    -- tab bar
+    local tabBar = New("Frame", {
+        Position         = UDim2.new(0, 0, 0, 44),
+        Size             = UDim2.new(0, 140, 1, -44),
+        BackgroundColor3 = theme.TabBarBg,
+        Parent           = main
+    })
+    New("UIStroke", { Color = theme.Separator, Thickness = 1, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = tabBar })
+    AddListLayout(tabBar, Enum.FillDirection.Vertical, 4)
+    AddPadding(tabBar, 8, 8)
+
+    -- content area
+    local contentArea = New("Frame", {
+        Position         = UDim2.new(0, 140, 0, 44),
+        Size             = UDim2.new(1, -140, 1, -44),
+        BackgroundTransparency = 1,
+        ClipsDescendants = true,
+        Parent           = main
+    })
+
+    -- search bar in tabbar
+    local searchBox = New("TextBox", {
+        Size             = UDim2.new(1, 0, 0, 28),
+        BackgroundColor3 = theme.InputBg,
+        Text             = "",
+        PlaceholderText  = "🔍 Search...",
+        TextColor3       = theme.InputText,
+        PlaceholderColor3 = theme.InputPlaceholder,
+        TextSize         = 11,
+        Font             = Enum.Font.Gotham,
+        ClearTextOnFocus = false,
+        Parent           = tabBar
+    })
+    RoundCorners(searchBox, 5)
+    New("UIStroke", { Color = theme.InputBorder, Thickness = 1, Parent = searchBox })
+
+    -- ── WINDOW METHODS ──────────────────────────
+    function Window:SetTheme(themeName)
+        -- hot-swap theme — rebuilds colors on all tracked elements
+        -- (kept minimal; for full rebuild just re-create the window)
+        theme = Veil.Themes[themeName] or theme
+        self.Theme = theme
+    end
+
+    function Window:Tab(name, icon)
+        local Tab    = { Sections = {}, Components = {} }
+        local isActive = false
+
+        -- tab button
+        local btn = New("TextButton", {
+            Size             = UDim2.new(1, 0, 0, 32),
+            BackgroundColor3 = theme.TabIdle,
+            Text             = (icon and icon .. "  " or "") .. name,
+            TextColor3       = theme.TabText,
+            TextSize         = 12,
+            Font             = Enum.Font.Gotham,
+            AutoButtonColor  = false,
+            Parent           = tabBar
+        })
+        RoundCorners(btn, 6)
+
+        -- tab content page
+        local page = New("ScrollingFrame", {
+            Size                  = UDim2.new(1, 0, 1, 0),
+            BackgroundTransparency = 1,
+            BorderSizePixel       = 0,
+            ScrollBarThickness    = 3,
+            ScrollBarImageColor3  = theme.ScrollBar,
+            CanvasSize            = UDim2.new(0, 0, 0, 0),
+            AutomaticCanvasSize   = Enum.AutomaticSize.Y,
+            Visible               = false,
+            Parent                = contentArea
+        })
+        AddListLayout(page, Enum.FillDirection.Vertical, 6)
+        AddPadding(page, 10, 10)
+
+        local function Activate()
+            for _, t in pairs(TabList) do
+                Tween(t.btn, { BackgroundColor3 = theme.TabIdle }, 0.15):Play()
+                t.btn.TextColor3 = theme.TabText
+                t.btn.Font       = Enum.Font.Gotham
+                t.page.Visible   = false
+            end
+            Tween(btn, { BackgroundColor3 = theme.TabActive }, 0.15):Play()
+            btn.TextColor3 = theme.TabTextActive
+            btn.Font       = Enum.Font.GothamBold
+            page.Visible   = true
+            isActive       = true
+            Window.ActiveTab = Tab
+        end
+
+        btn.MouseButton1Click:Connect(Activate)
+        btn.MouseEnter:Connect(function()
+            if not isActive then
+                Tween(btn, { BackgroundColor3 = theme.ComponentHover }, 0.1):Play()
+            end
+        end)
+        btn.MouseLeave:Connect(function()
+            if not isActive then
+                Tween(btn, { BackgroundColor3 = theme.TabIdle }, 0.1):Play()
+            end
+        end)
+
+        table.insert(TabList, { btn = btn, page = page, name = name })
+        if #TabList == 1 then Activate() end
+
+        -- search filter
+        searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+            local query = searchBox.Text:lower()
+            for _, comp in pairs(Tab.Components) do
+                if comp._frame then
+                    comp._frame.Visible = query == "" or comp._name:lower():find(query, 1, true) ~= nil
+                end
+            end
+        end)
+
+        -- ── TAB METHODS ──────────────────────────
+        function Tab:Section(title, collapsed)
+            local Section = { Components = {} }
+
+            local wrapper = New("Frame", {
+                Size             = UDim2.new(1, 0, 0, 0),
+                AutomaticSize    = Enum.AutomaticSize.Y,
+                BackgroundColor3 = theme.SectionBg,
+                Parent           = page
+            })
+            RoundCorners(wrapper, 8)
+            New("UIStroke", { Color = theme.SectionBorder, Thickness = 1, Parent = wrapper })
+
+            local isCollapsed = collapsed or false
+            local contentPad  = New("Frame", {
+                Position         = UDim2.new(0, 0, 0, 30),
+                Size             = UDim2.new(1, 0, 0, 0),
+                AutomaticSize    = Enum.AutomaticSize.Y,
+                BackgroundTransparency = 1,
+                ClipsDescendants = true,
+                Parent           = wrapper
+            })
+            AddListLayout(contentPad, Enum.FillDirection.Vertical, 4)
+            AddPadding(contentPad, 8, 4)
+
+            -- section header
+            local header = New("TextButton", {
+                Size             = UDim2.new(1, 0, 0, 30),
+                BackgroundTransparency = 1,
+                Text             = "",
+                AutoButtonColor  = false,
+                Parent           = wrapper
+            })
+            New("TextLabel", {
+                Position        = UDim2.new(0, 10, 0, 0),
+                Size            = UDim2.new(1, -30, 1, 0),
+                BackgroundTransparency = 1,
+                Text            = title or "Section",
+                TextColor3      = theme.SectionTitle,
+                TextSize        = 11,
+                Font            = Enum.Font.GothamBold,
+                TextXAlignment  = Enum.TextXAlignment.Left,
+                Parent          = header
+            })
+            local arrow = New("TextLabel", {
+                AnchorPoint     = Vector2.new(1, 0.5),
+                Position        = UDim2.new(1, -10, 0.5, 0),
+                Size            = UDim2.new(0, 12, 0, 12),
+                BackgroundTransparency = 1,
+                Text            = isCollapsed and "▶" or "▼",
+                TextColor3      = theme.SectionTitle,
+                TextSize        = 9,
+                Font            = Enum.Font.GothamBold,
+                Parent          = header
+            })
+
+            header.MouseButton1Click:Connect(function()
+                isCollapsed = not isCollapsed
+                contentPad.Visible = not isCollapsed
+                arrow.Text = isCollapsed and "▶" or "▼"
+            end)
+            if isCollapsed then contentPad.Visible = false end
+
+            -- separator under header
+            New("Frame", {
+                Position         = UDim2.new(0, 8, 0, 29),
+                Size             = UDim2.new(1, -16, 0, 1),
+                BackgroundColor3 = theme.Separator,
+                BorderSizePixel  = 0,
+                Parent           = wrapper
+            })
+
+            -- ──────────────────────────────────────────
+            --  COMPONENT BUILDER HELPERS
+            -- ──────────────────────────────────────────
+            local function BaseRow(name, height)
+                local row = New("Frame", {
+                    Size             = UDim2.new(1, 0, 0, height or 36),
+                    BackgroundColor3 = theme.ComponentBg,
+                    Parent           = contentPad
+                })
+                RoundCorners(row, 6)
+                New("UIStroke", { Color = theme.ComponentBorder, Thickness = 1, Parent = row })
+
+                row.MouseEnter:Connect(function()
+                    Tween(row, { BackgroundColor3 = theme.ComponentHover }, 0.1):Play()
+                end)
+                row.MouseLeave:Connect(function()
+                    Tween(row, { BackgroundColor3 = theme.ComponentBg }, 0.1):Play()
+                end)
+                return row
+            end
+
+            local function Label(parent, text, x, y, w, h, size, font, color, xAlign)
+                return New("TextLabel", {
+                    Position        = UDim2.new(0, x, 0, y),
+                    Size            = UDim2.new(0, w, 0, h),
+                    BackgroundTransparency = 1,
+                    Text            = text,
+                    TextColor3      = color or theme.LabelText,
+                    TextSize        = size or 12,
+                    Font            = font or Enum.Font.Gotham,
+                    TextXAlignment  = xAlign or Enum.TextXAlignment.Left,
+                    TextTruncate    = Enum.TextTruncate.AtEnd,
+                    Parent          = parent
+                })
+            end
+
+            -- ══════════════════════
+            --  TOGGLE
+            -- ══════════════════════
+            function Section:Toggle(config)
+                config = config or {}
+                local val = config.Default or false
+                if config.Flag then Veil.Flags[config.Flag] = val end
+
+                local row = BaseRow(config.Name, 36)
+                Label(row, config.Name or "Toggle", 10, 0, 200, 36)
+                if config.Description then
+                    Label(row, config.Description, 10, 20, 200, 14, 10, Enum.Font.Gotham, theme.DescText)
+                    row.Size = UDim2.new(1, 0, 0, 48)
+                end
+
+                -- track
+                local track = New("Frame", {
+                    AnchorPoint      = Vector2.new(1, 0.5),
+                    Position         = UDim2.new(1, -10, 0.5, 0),
+                    Size             = UDim2.new(0, 36, 0, 20),
+                    BackgroundColor3 = val and theme.ToggleOn or theme.ToggleOff,
+                    Parent           = row
+                })
+                RoundCorners(track, 10)
+                local knob = New("Frame", {
+                    AnchorPoint      = Vector2.new(0, 0.5),
+                    Position         = UDim2.new(0, val and 18 or 2, 0.5, 0),
+                    Size             = UDim2.new(0, 16, 0, 16),
+                    BackgroundColor3 = theme.ToggleKnob,
+                    Parent           = track
+                })
+                RoundCorners(knob, 8)
+
+                local btn = New("TextButton", {
+                    Size              = UDim2.new(1, 0, 1, 0),
+                    BackgroundTransparency = 1,
+                    Text              = "",
+                    Parent            = row
+                })
+
+                btn.MouseButton1Click:Connect(function()
+                    val = not val
+                    if config.Flag then Veil.Flags[config.Flag] = val end
+                    Tween(track, { BackgroundColor3 = val and theme.ToggleOn or theme.ToggleOff }, 0.15):Play()
+                    Tween(knob,  { Position = UDim2.new(0, val and 18 or 2, 0.5, 0) }, 0.15):Play()
+                    if config.Callback then config.Callback(val) end
+                end)
+
+                local comp = {
+                    _frame = row,
+                    _name  = config.Name or "",
+                    Set    = function(self, v)
+                        val = v
+                        if config.Flag then Veil.Flags[config.Flag] = v end
+                        Tween(track, { BackgroundColor3 = v and theme.ToggleOn or theme.ToggleOff }, 0.15):Play()
+                        Tween(knob,  { Position = UDim2.new(0, v and 18 or 2, 0.5, 0) }, 0.15):Play()
+                        if config.Callback then config.Callback(v) end
+                    end,
+                    Get    = function(self) return val end
+                }
+                table.insert(Section.Components, comp)
+                table.insert(Tab.Components, comp)
+                return comp
+            end
+
+            -- ══════════════════════
+            --  SLIDER
+            -- ══════════════════════
+            function Section:Slider(config)
+                config = config or {}
+                local min  = config.Min     or 0
+                local max  = config.Max     or 100
+                local step = config.Step    or 1
+                local val  = config.Default or min
+                if config.Flag then Veil.Flags[config.Flag] = val end
+
+                local row = BaseRow(config.Name, 50)
+                Label(row, config.Name or "Slider", 10, 4, 200, 16)
+                local valLabel = Label(row, tostring(val) .. (config.Suffix or ""), 0, 4, 0, 16, 11, Enum.Font.GothamBold, theme.Accent, Enum.TextXAlignment.Right)
+                valLabel.Position = UDim2.new(1, -10, 0, 4)
+                valLabel.Size     = UDim2.new(0, 80, 0, 16)
+
+                local track = New("Frame", {
+                    Position         = UDim2.new(0, 10, 0, 28),
+                    Size             = UDim2.new(1, -20, 0, 6),
+                    BackgroundColor3 = theme.SliderTrack,
+                    Parent           = row
+                })
+                RoundCorners(track, 3)
+                local fill = New("Frame", {
+                    Size             = UDim2.new((val - min) / (max - min), 0, 1, 0),
+                    BackgroundColor3 = theme.SliderFill,
+                    Parent           = track
+                })
+                RoundCorners(fill, 3)
+                local knob = New("Frame", {
+                    AnchorPoint      = Vector2.new(0.5, 0.5),
+                    Position         = UDim2.new((val - min) / (max - min), 0, 0.5, 0),
+                    Size             = UDim2.new(0, 12, 0, 12),
+                    BackgroundColor3 = theme.SliderKnob,
+                    ZIndex           = 3,
+                    Parent           = track
+                })
+                RoundCorners(knob, 6)
+
+                local dragging = false
+                local function Update(input)
+                    local rel = math.clamp(
+                        (input.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X,
+                        0, 1
+                    )
+                    local raw  = min + (max - min) * rel
+                    val        = math.round(raw / step) * step
+                    val        = math.clamp(val, min, max)
+                    if config.Flag then Veil.Flags[config.Flag] = val end
+                    local pct = (val - min) / (max - min)
+                    Tween(fill,  { Size     = UDim2.new(pct, 0, 1, 0) }, 0.05):Play()
+                    Tween(knob,  { Position = UDim2.new(pct, 0, 0.5, 0) }, 0.05):Play()
+                    valLabel.Text = tostring(val) .. (config.Suffix or "")
+                    if config.Callback then config.Callback(val) end
+                end
+
+                track.InputBegan:Connect(function(i)
+                    if i.UserInputType == Enum.UserInputType.MouseButton1 then
+                        dragging = true
+                        Update(i)
+                    end
+                end)
+                UserInputService.InputChanged:Connect(function(i)
+                    if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
+                        Update(i)
+                    end
+                end)
+                UserInputService.InputEnded:Connect(function(i)
+                    if i.UserInputType == Enum.UserInputType.MouseButton1 then
+                        dragging = false
+                    end
+                end)
+
+                local comp = {
+                    _frame = row,
+                    _name  = config.Name or "",
+                    Set    = function(self, v)
+                        val = math.clamp(v, min, max)
+                        if config.Flag then Veil.Flags[config.Flag] = val end
+                        local pct = (val - min) / (max - min)
+                        Tween(fill,  { Size     = UDim2.new(pct, 0, 1, 0) }, 0.15):Play()
+                        Tween(knob,  { Position = UDim2.new(pct, 0, 0.5, 0) }, 0.15):Play()
+                        valLabel.Text = tostring(val) .. (config.Suffix or "")
+                        if config.Callback then config.Callback(val) end
+                    end,
+                    Get    = function(self) return val end
+                }
+                table.insert(Section.Components, comp)
+                table.insert(Tab.Components, comp)
+                return comp
+            end
+
+            -- ══════════════════════
+            --  BUTTON
+            -- ══════════════════════
+            function Section:Button(config)
+                config = config or {}
+                local row = BaseRow(config.Name, 36)
+
+                local btn = New("TextButton", {
+                    Size             = UDim2.new(1, -20, 0, 26),
+                    Position         = UDim2.new(0, 10, 0.5, -13),
+                    BackgroundColor3 = theme.ButtonBg,
+                    Text             = config.Name or "Button",
+                    TextColor3       = theme.ButtonText,
+                    TextSize         = 12,
+                    Font             = Enum.Font.GothamBold,
+                    AutoButtonColor  = false,
+                    Parent           = row
+                })
+                RoundCorners(btn, 6)
+
+                btn.MouseEnter:Connect(function()
+                    Tween(btn, { BackgroundColor3 = theme.ButtonHover }, 0.1):Play()
+                end)
+                btn.MouseLeave:Connect(function()
+                    Tween(btn, { BackgroundColor3 = theme.ButtonBg }, 0.1):Play()
+                end)
+                btn.MouseButton1Down:Connect(function()
+                    Tween(btn, { BackgroundColor3 = theme.ButtonPress }, 0.05):Play()
+                end)
+                btn.MouseButton1Up:Connect(function()
+                    Tween(btn, { BackgroundColor3 = theme.ButtonHover }, 0.1):Play()
+                end)
+                btn.MouseButton1Click:Connect(function()
+                    if config.Callback then config.Callback() end
+                end)
+
+                local comp = { _frame = row, _name = config.Name or "" }
+                table.insert(Section.Components, comp)
+                table.insert(Tab.Components, comp)
+                return comp
+            end
+
+            -- ══════════════════════
+            --  DROPDOWN
+            -- ══════════════════════
+            function Section:Dropdown(config)
+                config   = config or {}
+                local options  = config.Options or {}
+                local multi    = config.Multi    or false
+                local selected = multi and {} or (config.Default or options[1])
+                if config.Flag then Veil.Flags[config.Flag] = selected end
+
+                local isOpen  = false
+                local rowH    = 36
+
+                local row = BaseRow(config.Name, rowH)
+                Label(row, config.Name or "Dropdown", 10, 0, 160, rowH)
+
+                local displayText = multi and "Select..." or (selected or "Select...")
+                local display = New("TextButton", {
+                    AnchorPoint      = Vector2.new(1, 0.5),
+                    Position         = UDim2.new(1, -8, 0.5, 0),
+                    Size             = UDim2.new(0, 130, 0, 24),
+                    BackgroundColor3 = theme.DropdownBg,
+                    Text             = displayText,
+                    TextColor3       = theme.LabelText,
+                    TextSize         = 11,
+                    Font             = Enum.Font.Gotham,
+                    AutoButtonColor  = false,
+                    ClipsDescendants = true,
+                    Parent           = row
+                })
+                RoundCorners(display, 5)
+                New("UIStroke", { Color = theme.ComponentBorder, Thickness = 1, Parent = display })
+
+                New("TextLabel", {
+                    AnchorPoint     = Vector2.new(1, 0.5),
+                    Position        = UDim2.new(1, -6, 0.5, 0),
+                    Size            = UDim2.new(0, 12, 0, 12),
+                    BackgroundTransparency = 1,
+                    Text            = "▼",
+                    TextColor3      = theme.Accent,
+                    TextSize        = 8,
+                    Font            = Enum.Font.GothamBold,
+                    Parent          = display
+                })
+
+                -- popup list (parented to gui so it overlaps)
+                local popup = New("Frame", {
+                    Size             = UDim2.new(0, 130, 0, 0),
+                    BackgroundColor3 = theme.DropdownBg,
+                    ZIndex           = 10,
+                    ClipsDescendants = true,
+                    Visible          = false,
+                    Parent           = gui
+                })
+                RoundCorners(popup, 6)
+                New("UIStroke", { Color = theme.Accent, Thickness = 1, Parent = popup })
+
+                local optList = New("Frame", {
+                    Size             = UDim2.new(1, 0, 0, 0),
+                    AutomaticSize    = Enum.AutomaticSize.Y,
+                    BackgroundTransparency = 1,
+                    Parent           = popup
+                })
+                AddListLayout(optList, Enum.FillDirection.Vertical, 2)
+                AddPadding(optList, 4, 4)
+
+                local function RefreshDisplay()
+                    if multi then
+                        local names = {}
+                        for k in pairs(selected) do table.insert(names, k) end
+                        display.Text = #names > 0 and table.concat(names, ", ") or "Select..."
+                    else
+                        display.Text = selected or "Select..."
+                    end
+                end
+
+                local function BuildOptions()
+                    for _, child in pairs(optList:GetChildren()) do
+                        if not child:IsA("UIListLayout") and not child:IsA("UIPadding") then
+                            child:Destroy()
+                        end
+                    end
+                    for _, opt in ipairs(options) do
+                        local isSelected = multi and selected[opt] or (selected == opt)
+                        local optBtn = New("TextButton", {
+                            Size             = UDim2.new(1, 0, 0, 26),
+                            BackgroundColor3 = isSelected and theme.DropdownSelected or theme.DropdownOption,
+                            Text             = opt,
+                            TextColor3       = theme.LabelText,
+                            TextSize         = 11,
+                            Font             = isSelected and Enum.Font.GothamBold or Enum.Font.Gotham,
+                            AutoButtonColor  = false,
+                            ZIndex           = 11,
+                            Parent           = optList
+                        })
+                        RoundCorners(optBtn, 4)
+                        optBtn.MouseButton1Click:Connect(function()
+                            if multi then
+                                selected[opt] = not selected[opt] or nil
+                            else
+                                selected = opt
+                                isOpen = false
+                                Tween(popup, { Size = UDim2.new(0, 130, 0, 0) }, 0.2):Play()
+                                task.delay(0.2, function() popup.Visible = false end)
+                            end
+                            if config.Flag then Veil.Flags[config.Flag] = selected end
+                            RefreshDisplay()
+                            BuildOptions()
+                            if config.Callback then config.Callback(selected) end
+                        end)
+                    end
+                end
+                BuildOptions()
+
+                display.MouseButton1Click:Connect(function()
+                    isOpen = not isOpen
+                    if isOpen then
+                        local abs  = display.AbsolutePosition
+                        local absS = display.AbsoluteSize
+                        popup.Position = UDim2.new(0, abs.X, 0, abs.Y + absS.Y + 4)
+                        popup.Visible  = true
+                        local targetH  = math.min(#options * 30 + 12, 180)
+                        Tween(popup, { Size = UDim2.new(0, 130, 0, targetH) }, 0.2):Play()
+                    else
+                        Tween(popup, { Size = UDim2.new(0, 130, 0, 0) }, 0.2):Play()
+                        task.delay(0.2, function() popup.Visible = false end)
+                    end
+                end)
+
+                local comp = {
+                    _frame = row,
+                    _name  = config.Name or "",
+                    Set    = function(self, v)
+                        selected = v
+                        if config.Flag then Veil.Flags[config.Flag] = v end
+                        RefreshDisplay()
+                        BuildOptions()
+                        if config.Callback then config.Callback(v) end
+                    end,
+                    Get    = function(self) return selected end,
+                    Refresh = function(self, newOptions)
+                        options = newOptions
+                        BuildOptions()
+                    end
+                }
+                table.insert(Section.Components, comp)
+                table.insert(Tab.Components, comp)
+                return comp
+            end
+
+            -- ══════════════════════
+            --  TEXTBOX
+            -- ══════════════════════
+            function Section:TextBox(config)
+                config = config or {}
+                local val = config.Default or ""
+                if config.Flag then Veil.Flags[config.Flag] = val end
+
+                local row = BaseRow(config.Name, 36)
+                Label(row, config.Name or "Input", 10, 0, 120, 36)
+
+                local box = New("TextBox", {
+                    AnchorPoint      = Vector2.new(1, 0.5),
+                    Position         = UDim2.new(1, -8, 0.5, 0),
+                    Size             = UDim2.new(0, 150, 0, 24),
+                    BackgroundColor3 = theme.InputBg,
+                    Text             = val,
+                    PlaceholderText  = config.Placeholder or "Type here...",
+                    TextColor3       = theme.InputText,
+                    PlaceholderColor3 = theme.InputPlaceholder,
+                    TextSize         = 11,
+                    Font             = Enum.Font.Gotham,
+                    ClearTextOnFocus = config.ClearOnFocus or false,
+                    Parent           = row
+                })
+                RoundCorners(box, 5)
+                New("UIStroke", { Color = theme.InputBorder, Thickness = 1, Parent = box })
+                AddPadding(box, 6, 0)
+
+                box:GetPropertyChangedSignal("Text"):Connect(function()
+                    val = box.Text
+                    if config.Flag then Veil.Flags[config.Flag] = val end
+                end)
+                box.FocusLost:Connect(function(enter)
+                    if config.Callback then config.Callback(box.Text, enter) end
+                end)
+                box.Focused:Connect(function()
+                    Tween(box, { BorderSizePixel = 0 }, 0.0)
+                    -- highlight border via stroke
+                    local stroke = box:FindFirstChildOfClass("UIStroke")
+                    if stroke then Tween(stroke, { Color = theme.Accent }, 0.15):Play() end
+                end)
+                box.FocusLost:Connect(function()
+                    local stroke = box:FindFirstChildOfClass("UIStroke")
+                    if stroke then Tween(stroke, { Color = theme.InputBorder }, 0.15):Play() end
+                end)
+
+                local comp = {
+                    _frame = row,
+                    _name  = config.Name or "",
+                    Set    = function(self, v)
+                        box.Text = v
+                        val = v
+                        if config.Flag then Veil.Flags[config.Flag] = v end
+                    end,
+                    Get    = function(self) return val end
+                }
+                table.insert(Section.Components, comp)
+                table.insert(Tab.Components, comp)
+                return comp
+            end
+
+            -- ══════════════════════
+            --  LABEL
+            -- ══════════════════════
+            function Section:Label(config)
+                config = config or {}
+                local row = New("Frame", {
+                    Size             = UDim2.new(1, 0, 0, 24),
+                    BackgroundTransparency = 1,
+                    Parent           = contentPad
+                })
+                local lbl = New("TextLabel", {
+                    Size            = UDim2.new(1, -20, 1, 0),
+                    Position        = UDim2.new(0, 10, 0, 0),
+                    BackgroundTransparency = 1,
+                    Text            = config.Text or "",
+                    TextColor3      = config.Color or theme.DescText,
+                    TextSize        = config.Size or 11,
+                    Font            = Enum.Font.Gotham,
+                    TextXAlignment  = config.Align or Enum.TextXAlignment.Left,
+                    TextWrapped     = true,
+                    Parent          = row
+                })
+                local comp = {
+                    _frame = row,
+                    _name  = config.Text or "",
+                    Set    = function(self, text) lbl.Text = text end,
+                    Get    = function(self) return lbl.Text end
+                }
+                table.insert(Section.Components, comp)
+                table.insert(Tab.Components, comp)
+                return comp
+            end
+
+            -- ══════════════════════
+            --  SEPARATOR
+            -- ══════════════════════
+            function Section:Separator()
+                local sep = New("Frame", {
+                    Size             = UDim2.new(1, -20, 0, 1),
+                    Position         = UDim2.new(0, 10, 0, 0),
+                    BackgroundColor3 = theme.Separator,
+                    BorderSizePixel  = 0,
+                    Parent           = contentPad
+                })
+                return sep
+            end
+
+            -- ══════════════════════
+            --  KEYBIND
+            -- ══════════════════════
+            function Section:Keybind(config)
+                config = config or {}
+                local key   = config.Default or Enum.KeyCode.Unknown
+                local listening = false
+                if config.Flag then Veil.Flags[config.Flag] = key end
+
+                local row = BaseRow(config.Name, 36)
+                Label(row, config.Name or "Keybind", 10, 0, 200, 36)
+
+                local keyBtn = New("TextButton", {
+                    AnchorPoint      = Vector2.new(1, 0.5),
+                    Position         = UDim2.new(1, -8, 0.5, 0),
+                    Size             = UDim2.new(0, 80, 0, 24),
+                    BackgroundColor3 = theme.ComponentBg,
+                    Text             = key == Enum.KeyCode.Unknown and "None" or key.Name,
+                    TextColor3       = theme.Accent,
+                    TextSize         = 11,
+                    Font             = Enum.Font.GothamBold,
+                    AutoButtonColor  = false,
+                    Parent           = row
+                })
+                RoundCorners(keyBtn, 5)
+                New("UIStroke", { Color = theme.Accent, Thickness = 1, Parent = keyBtn })
+
+                keyBtn.MouseButton1Click:Connect(function()
+                    listening      = true
+                    keyBtn.Text    = "..."
+                    keyBtn.TextColor3 = theme.SubTitleText
+                end)
+                UserInputService.InputBegan:Connect(function(input, gpe)
+                    if listening and input.UserInputType == Enum.UserInputType.Keyboard then
+                        key = input.KeyCode
+                        if config.Flag then Veil.Flags[config.Flag] = key end
+                        keyBtn.Text = key.Name
+                        keyBtn.TextColor3 = theme.Accent
+                        listening = false
+                        if config.Callback then config.Callback(key) end
+                    end
+                end)
+
+                local comp = {
+                    _frame = row,
+                    _name  = config.Name or "",
+                    Get    = function(self) return key end
+                }
+                table.insert(Section.Components, comp)
+                table.insert(Tab.Components, comp)
+                return comp
+            end
+
+            -- ══════════════════════
+            --  COLOR PICKER
+            -- ══════════════════════
+            function Section:ColorPicker(config)
+                config = config or {}
+                local color = config.Default or Color3.fromRGB(255, 255, 255)
+                if config.Flag then Veil.Flags[config.Flag] = color end
+
+                local row = BaseRow(config.Name, 36)
+                Label(row, config.Name or "Color", 10, 0, 200, 36)
+
+                local preview = New("TextButton", {
+                    AnchorPoint      = Vector2.new(1, 0.5),
+                    Position         = UDim2.new(1, -8, 0.5, 0),
+                    Size             = UDim2.new(0, 40, 0, 22),
+                    BackgroundColor3 = color,
+                    Text             = "",
+                    AutoButtonColor  = false,
+                    Parent           = row
+                })
+                RoundCorners(preview, 5)
+                New("UIStroke", { Color = theme.ComponentBorder, Thickness = 1, Parent = preview })
+
+                -- color picker popup
+                local isOpen = false
+                local picker = New("Frame", {
+                    Size             = UDim2.new(0, 200, 0, 200),
+                    BackgroundColor3 = theme.DropdownBg,
+                    ZIndex           = 15,
+                    Visible          = false,
+                    Parent           = gui
+                })
+                RoundCorners(picker, 8)
+                New("UIStroke", { Color = theme.Accent, Thickness = 1, Parent = picker })
+                AddPadding(picker, 8, 8)
+                AddListLayout(picker, Enum.FillDirection.Vertical, 6)
+
+                -- HSV sliders
+                local h, s, v = Color3.toHSV(color)
+
+                local function RebuildColor()
+                    color = Color3.fromHSV(h, s, v)
+                    preview.BackgroundColor3 = color
+                    if config.Flag then Veil.Flags[config.Flag] = color end
+                    if config.Callback then config.Callback(color) end
+                end
+
+                local function HSVSlider(label, initial, callback)
+                    local f = New("Frame", {
+                        Size = UDim2.new(1, 0, 0, 40),
+                        BackgroundTransparency = 1,
+                        Parent = picker
+                    })
+                    New("TextLabel", {
+                        Size = UDim2.new(1, 0, 0, 14),
+                        BackgroundTransparency = 1,
+                        Text = label,
+                        TextColor3 = theme.LabelText,
+                        TextSize = 10,
+                        Font = Enum.Font.Gotham,
+                        TextXAlignment = Enum.TextXAlignment.Left,
+                        Parent = f
+                    })
+                    local track = New("Frame", {
+                        Position = UDim2.new(0, 0, 0, 18),
+                        Size = UDim2.new(1, 0, 0, 8),
+                        BackgroundColor3 = theme.SliderTrack,
+                        Parent = f
+                    })
+                    RoundCorners(track, 4)
+                    local fill = New("Frame", {
+                        Size = UDim2.new(initial, 0, 1, 0),
+                        BackgroundColor3 = theme.Accent,
+                        Parent = track
+                    })
+                    RoundCorners(fill, 4)
+                    local knob = New("Frame", {
+                        AnchorPoint = Vector2.new(0.5, 0.5),
+                        Position = UDim2.new(initial, 0, 0.5, 0),
+                        Size = UDim2.new(0, 10, 0, 10),
+                        BackgroundColor3 = Color3.fromRGB(255,255,255),
+                        ZIndex = 16,
+                        Parent = track
+                    })
+                    RoundCorners(knob, 5)
+
+                    local dragging = false
+                    track.InputBegan:Connect(function(i)
+                        if i.UserInputType == Enum.UserInputType.MouseButton1 then
+                            dragging = true
+                            local rel = math.clamp((i.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+                            Tween(fill,  { Size = UDim2.new(rel, 0, 1, 0) }, 0.05):Play()
+                            Tween(knob,  { Position = UDim2.new(rel, 0, 0.5, 0) }, 0.05):Play()
+                            callback(rel)
+                        end
+                    end)
+                    UserInputService.InputChanged:Connect(function(i)
+                        if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
+                            local rel = math.clamp((i.Position.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+                            Tween(fill,  { Size = UDim2.new(rel, 0, 1, 0) }, 0.05):Play()
+                            Tween(knob,  { Position = UDim2.new(rel, 0, 0.5, 0) }, 0.05):Play()
+                            callback(rel)
+                        end
+                    end)
+                    UserInputService.InputEnded:Connect(function(i)
+                        if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+                    end)
+                end
+
+                HSVSlider("Hue", h, function(val) h = val RebuildColor() end)
+                HSVSlider("Saturation", s, function(val) s = val RebuildColor() end)
+                HSVSlider("Value", v, function(val) v = val RebuildColor() end)
+
+                -- hex input
+                local hexBox = New("TextBox", {
+                    Size = UDim2.new(1, 0, 0, 24),
+                    BackgroundColor3 = theme.InputBg,
+                    Text = string.format("#%02X%02X%02X", color.R*255, color.G*255, color.B*255),
+                    TextColor3 = theme.InputText,
+                    TextSize = 11,
+                    Font = Enum.Font.Code,
+                    Parent = picker
+                })
+                RoundCorners(hexBox, 4)
+                New("UIStroke", { Color = theme.InputBorder, Thickness = 1, Parent = hexBox })
+                hexBox.FocusLost:Connect(function()
+                    local hex = hexBox.Text:gsub("#", "")
+                    if #hex == 6 then
+                        local r = tonumber(hex:sub(1,2), 16)
+                        local g = tonumber(hex:sub(3,4), 16)
+                        local b = tonumber(hex:sub(5,6), 16)
+                        if r and g and b then
+                            color = Color3.fromRGB(r, g, b)
+                            h, s, v = Color3.toHSV(color)
+                            preview.BackgroundColor3 = color
+                            if config.Flag then Veil.Flags[config.Flag] = color end
+                            if config.Callback then config.Callback(color) end
+                        end
+                    end
+                end)
+
+                preview.MouseButton1Click:Connect(function()
+                    isOpen = not isOpen
+                    if isOpen then
+                        local abs = preview.AbsolutePosition
+                        picker.Position = UDim2.new(0, abs.X - 80, 0, abs.Y + 30)
+                        picker.Visible = true
+                    else
+                        picker.Visible = false
+                    end
+                end)
+
+                local comp = {
+                    _frame = row,
+                    _name  = config.Name or "",
+                    Set    = function(self, c)
+                        color = c
+                        preview.BackgroundColor3 = c
+                        if config.Flag then Veil.Flags[config.Flag] = c end
+                        if config.Callback then config.Callback(c) end
+                    end,
+                    Get    = function(self) return color end
+                }
+                table.insert(Section.Components, comp)
+                table.insert(Tab.Components, comp)
+                return comp
+            end
+
+            return Section
+        end -- Tab:Section
+
+        return Tab
+    end -- Window:Tab
+
+    -- ── WINDOW THEME SWITCHER BUTTON ─────────────
+    local themeNames = {}
+    for k in pairs(Veil.Themes) do table.insert(themeNames, k) end
+
+    -- startup notification
+    task.spawn(function()
+        task.wait(0.5)
+        Veil:Notify({
+            Title    = config.Title or "Veil",
+            Text     = "UI loaded. Theme: " .. (config.Theme or "Dark"),
+            Duration = 3,
+            Theme    = config.Theme or "Dark"
+        })
+    end)
+
+    table.insert(Veil.Windows, Window)
+    return Window
+end
+
+-- ══════════════════════════════════════════
+--  CONFIG SAVE / LOAD (via writefile/readfile)
+-- ══════════════════════════════════════════
+function Veil:SaveConfig(name)
+    local data = {}
+    for flag, val in pairs(self.Flags) do
+        if type(val) == "boolean" or type(val) == "number" or type(val) == "string" then
+            data[flag] = val
+        elseif typeof(val) == "EnumItem" then
+            data[flag] = tostring(val)
+        elseif typeof(val) == "Color3" then
+            data[flag] = { val.R, val.G, val.B }
+        end
+    end
+    local encoded = game:GetService("HttpService"):JSONEncode(data)
+    if writefile then
+        writefile("veil_" .. name .. ".json", encoded)
+        self:Notify({ Title = "Config", Text = "Saved: " .. name, Duration = 2 })
+    end
+end
+
+function Veil:LoadConfig(name)
+    if not readfile then return end
+    local ok, raw = pcall(readfile, "veil_" .. name .. ".json")
+    if not ok or not raw then return end
+    local ok2, data = pcall(function() return game:GetService("HttpService"):JSONDecode(raw) end)
+    if not ok2 or not data then return end
+    for flag, val in pairs(data) do
+        if type(val) == "table" and #val == 3 then
+            self.Flags[flag] = Color3.new(val[1], val[2], val[3])
+        else
+            self.Flags[flag] = val
+        end
+    end
+    self:Notify({ Title = "Config", Text = "Loaded: " .. name, Duration = 2 })
+end
+
+return Veil
+
+--[[
+═══════════════════════════════════════════════════════════════
+  FULL API REFERENCE
+═══════════════════════════════════════════════════════════════
+
+  WINDOW
+  ──────
+  local W = Veil:Window({
+      Title    = "MyScript",       -- window title
+      SubTitle = "v1.0",           -- small subtitle
+      Theme    = "Dark",           -- "Dark" | "Midnight" | "Light" | custom
+      Width    = 580,              -- optional width override
+      Height   = 400,             -- optional height override
+      Name     = "VeilUI",        -- ScreenGui name
+  })
+
+  TAB
+  ───
+  local T = W:Tab("Tab Name", "🔧")   -- name, optional icon emoji
+
+  SECTION
+  ───────
+  local S = T:Section("Section Name", false)   -- name, start collapsed?
+
+  COMPONENTS (all on Section)
+  ───────────────────────────
+  S:Toggle({
+      Name        = "My Toggle",
+      Flag        = "myFlag",          -- Veil.Flags.myFlag
+      Default     = false,
+      Description = "Optional desc",
+      Callback    = function(v) end    -- v: boolean
+  })
+
+  S:Slider({
+      Name     = "Speed",
+      Flag     = "speedFlag",
+      Min      = 0,
+      Max      = 100,
+      Step     = 1,
+      Default  = 16,
+      Suffix   = " stud/s",
+      Callback = function(v) end       -- v: number
+  })
+
+  S:Button({
+      Name     = "Teleport",
+      Callback = function() end
+  })
+
+  S:Dropdown({
+      Name     = "Team",
+      Flag     = "teamFlag",
+      Options  = { "Red", "Blue", "Green" },
+      Default  = "Red",
+      Multi    = false,                -- true = multi-select
+      Callback = function(v) end       -- v: string or table
+  })
+
+  S:TextBox({
+      Name        = "Player",
+      Flag        = "targetFlag",
+      Default     = "",
+      Placeholder = "Enter name...",
+      Callback    = function(text, enter) end
+  })
+
+  S:Keybind({
+      Name     = "Toggle UI",
+      Flag     = "uiKeyFlag",
+      Default  = Enum.KeyCode.RightShift,
+      Callback = function(key) end
+  })
+
+  S:ColorPicker({
+      Name     = "Chams Color",
+      Flag     = "chamsColor",
+      Default  = Color3.fromRGB(255, 0, 0),
+      Callback = function(color) end
+  })
+
+  S:Label({ Text = "Info text here", Color = Color3.fromRGB(150,150,170) })
+  S:Separator()
+
+  NOTIFICATIONS
+  ─────────────
+  Veil:Notify({
+      Title    = "Alert",
+      Text     = "Something happened",
+      Duration = 4,
+      Theme    = "Dark",
+      Accent   = Color3.fromRGB(255, 80, 80)   -- optional override
+  })
+
+  CUSTOM THEME
+  ────────────
+  Veil:RegisterTheme("MyTheme", { ...same keys as built-in themes... })
+
+  FLAGS
+  ─────
+  Veil.Flags.myFlag   -- read any component's value globally
+
+  CONFIG
+  ──────
+  Veil:SaveConfig("default")
+  Veil:LoadConfig("default")
+
+═══════════════════════════════════════════════════════════════
+]]
