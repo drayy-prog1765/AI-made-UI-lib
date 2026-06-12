@@ -7,7 +7,7 @@
       ╚═══╝  ╚══════╝╚═╝╚══════╝
     
     Veil UI Library v2.0
-    Better than Linoria. More customizable. Cleaner API.
+    
     
     QUICK START:
         local Veil = loadstring(game:HttpGet("..."))()
